@@ -1,0 +1,38 @@
+# 虚拟环境（uv / venv 都会建）
+.venv/
+
+# Python 缓存
+__pycache__/
+*.py[cod]
+*$py.class
+
+# 打包产物（以后有再出现）
+dist/
+build/
+*.egg-info/
+
+# 测试 / 工具缓存（用到再有）
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# 环境变量（别把密钥提交上去）
+.env
+.env.*
+
+# 知识库原始包 / 本地模型权重 / 向量库（体积大，勿提交）
+server/knowledge/raw/
+server/knowledge/extracted/
+server/knowledge/clean/
+server/knowledge/models/
+server/knowledge/chroma/
+# 兼容旧路径（若本地残留）
+chroma_data/
+*.pyc
+.Python
+
+# 运行日志（勿提交）
+server/logs/
+client-web/logs/
+
+server/data/

@@ -1,0 +1,42 @@
+---
+description: client-web（Vite+React）分层：services 基础设施、store/页面薄编排；i18n 禁硬编码；中文注释讲为什么。
+globs: client-web/**
+alwaysApply: false
+---
+
+# client-web 架构
+
+与 server `infra` Manager 同精神；本包是浏览器 UI，不是第二套业务脑。
+
+## 三层
+
+| 层 | 落点 | 做什么 |
+|---|---|---|
+| Service | `src/services/` | HTTP/SSE、health、reconnect、stream、resume；**唯一网络出口** |
+| 编排状态 | `src/store/` + 页面 hooks | SSE → 归约 UI 状态；开局 prefs |
+| 视图 | `pages/` / `components/` | 展示与点击；调用 service/store |
+
+## 硬性
+
+- 组件禁止直接 `fetch` / `EventSource`；走 Service。
+- 不在前端实现工具选型 / 意图分流；只渲染服务端口播与摘要。
+- `session_prefs` 经 ChatRequest 交给 server；真源在 checkpoint。
+- **UI 文案禁止硬编码**：一律走 `src/locales/`（v1 只填 `zh-CN`）；新增文案先加 key。
+
+## 信息架构（锁定）
+
+1. Steps：**工作台（最近会话）→ 选助手（含会话名）→ 连接（按助手预填 MCP）→ 本局选项 → 对话页**
+2. 会话名：选助手时可改；默认「前缀 + 序号」；**同 `agentRole` 下不重名**；登记在浏览器 `localStorage`
+3. 工作台：入口页；点最近会话 → **直达对话页**（`/chat/gate` 恢复闸门）
+4. 对话页：顶栏状态由扮演提供；左侧也由扮演提供（场景优化是节点流程，真机是 ADB 连接 + 本局采样）；空态「开始」跑 greet→hitl；`need_clarify`（`gate=hitl`）可输入；`need_approval` 显示批准/跳过
+5. 运行中仍可输入：进 `pendingAsks`；闸门到且有缓存 → 自动 `say`
+6. Resume：`say`/`ask` 与 `approve`/`skip` 走同一 `/chat/resume`；**新开局**用空 `messages` 的 `/chat/stream`
+7. 连续工具合并一条；不展示无用 observation
+
+## 注释（简体中文）
+
+对齐 `ailearning-code-style.mdc`：关键处写清为什么（SSE 用 fetch 流、resume 契约、HITL 禁用时机）。禁止废话注释。
+
+## 自检
+
+换一个后端扮演，这个 UI 是否仍成立？不成立 → 业务漏进前端了。

@@ -1,0 +1,117 @@
+---
+description: 开发/扩展 kabu-unity-mcp（新增 tool、Handler、Profiler/FD、目录与清单）。在 AILearning 会话里改 MCP 包或给 Agent 加编辑器能力时读取。
+alwaysApply: false
+---
+
+# kabu-unity-mcp 开发规范（AILearning 侧副本）
+
+本仓库是 **编排端**；MCP 包不在本 git 树内。改工具实现时打开包仓库，并遵守本文清单。
+
+| 项 | 路径 |
+|---|---|
+| MCP 包 | `F:/Git/kabu_mobile/kabu-unity-mcp`（UPM `com.kabu.unity-mcp`） |
+| 联调工程 | `F:/Git/kabu_mobile/client-assets` |
+| 工程 settings | `client-assets/Assets/kabu-unity-mcp/settings.json`（端口 **3828**） |
+| 本仓连接 | `.cursor/mcp.json` → `kabu-unity-mcp-assets` |
+| **Agent 用法**（采数纪律、勿抢焦点） | 同目录 [`kabu-unity-mcp.mdc`](kabu-unity-mcp.mdc) |
+| **编排防耦合** | [`ailearning-orchestration.mdc`](ailearning-orchestration.mdc)（alwaysApply） |
+| 包内/工程侧原稿 | `client-assets/.cursor/rules/kabu-unity-mcp-dev.mdc`（两边宜保持同步） |
+
+Agent 以 **MCP tool schema** 为准，不为每个 tool 写 skill。
+
+目标：AI **采结构化数据 → 判断瓶颈 → 改完再采对比**。Frame Debugger / Overdraw / Profiler 同一类能力，按下列规则扩展；禁止巨型 `manage_*` 合集。
+
+## 与编排的边界
+
+| 放 AILearning | 放 kabu-unity-mcp |
+|---|---|
+| LangGraph 节点、扮演 prompt、HITL、SSE | Editor Ops / Handler / Server Tool / Catalog |
+| 观测摘要 | 采数稳定性、新编辑器副作用能力 |
+| 评测与 run 日志 | EditMode 测 Ops |
+
+帧诊业务语义（Batches、旋钮）进扮演包，**不要**为省事写进 MCP Description 当「唯一成功标准」。
+
+## 目录结构（包内）
+
+```
+kabu-unity-mcp/
+  Editor/Scripts/
+    Extensions/                 # Host / MethodRegistry
+    Handlers/<Domain>/          # XxxOps.cs + XxxHandlers.cs
+    Services/McpUnityBridge.cs  # Registry → 内置 switch
+    Models/McpToolCatalog.cs    # 必与 Server 同步
+  Server~/                      # Streamable HTTP + /ws
+    Tools/Unity/<Domain>/XxxTool.cs
+  Tests/Editor/<Domain>/        # 优先测 Ops
+```
+
+## 新增 Tool 清单（缺一不可）
+
+1. **Server**：`Server~/Tools/Unity/<Domain>/XxxTool.cs`  
+   `[McpServerTool]` + Description（副作用、前置、回包形状）→ `hub.SendRequestAsync("unity.camelMethod", params)`
+2. **Ops**：`Handlers/<Domain>/XxxOps.cs` → `HandlerResult`（可单测）
+3. **Handler**：解析 params → Ops；成功/失败回包
+4. **Bridge**：`OnRequest` 增加 `case "unity.camelMethod":`
+5. **Catalog**：`McpToolCatalog.All` 加项
+6. **settings**：Server Window 存一次，或写入工程 `settings.json`
+7. **测试**（能写就写）：`Tests/Editor/<Domain>/`，清理用既有 cleanup
+
+命名：WS method **camelCase**（`unity.getConsoleLogs`）；对外 MCP **snake**（`unity_get_console_logs`）。
+
+改完 **Server~**：在 `kabu-unity-mcp/Server~` **主动 `dotnet build`**；DLL 被占用则重启 Server 并让 Unity 重连。  
+改 **Editor**：靠 Unity 编译 / Domain Reload。
+
+## Tool vs Resource
+
+| | Tool | Resource |
+|---|---|---|
+| 副作用 | 允许 | **禁止** |
+| 大数据 | 分页 / 按 id | 禁止整帧全量 |
+| 命名 | `unity_<动词>_<对象>` | `unity://...` |
+
+有副作用、要参数、要分页 → **一律 Tool**。
+
+## 设计原则
+
+- **一个能力一块 tool**，禁止 `action=` 大枚举（避免 Coplay 式 `manage_profiler`）
+- **目录瘦、详情肥**；列表可分页（`offset`/`limit` + `total`/`nextOffset`）
+- Description 写明：是否暂停 Play、是否开窗、失败怎么处理
+- 回包 **干净 JSON**；反射兼容 2022.3 / Unity 6，找不到类型要报错，禁止空字段装成功
+
+## 性能类（Profiler / FD / capture）
+
+放 `Handlers/Profiler/`（或 `Rendering/`）。
+
+- **Frame Debugger**：Enable 会暂停 → tool；须开 FD 窗口；list 分页目录 / `get_event` 单条；禁止一次吐整帧 Full Detail
+- **Profiler**：拆 enable/disable/counters/hierarchy/…；禁止 `manage_profiler`
+- **统一采帧**：`unity_perf_capture_frame`（`kabu.perf.frame-capture/v1`）；异步回包，勿主线程死等
+- 需要等编辑器帧：Handler 用 `EditorApplication.update`，不要阻塞
+
+## 工程 Host（业务扩展）
+
+通用包 **禁止** 引用 TimelineEditor。SkillEditor 等：包内契约 + 工程 `Register` Host。细节以 client-assets 原稿为准；本仓帧诊默认不依赖这些 tool。
+
+## 禁止
+
+- 整帧 Dump 当 Resource 喂模型
+- 只改 Server 或只改 Editor 一侧
+- Catalog 与 Bridge method 名不一致
+- Description 隐瞒暂停播放、删资源等副作用
+- 引入第三方整包 MCP 作运行时依赖
+
+## 验证
+
+1. Unity（client-assets）：编译通过 → Server Window 连接（`unity_ws_status` > 0），端口 3828  
+2. AILearning：`GET /health` → `mcp_ok`；或 Cursor 能列出新 tool  
+3. 有副作用：测完对应 disable / 恢复 Play  
+4. 提交：**kabu-unity-mcp** 仓库改代码；本仓只更新 rule/用法说明时各自提交；client-assets 若仍挂原稿 rule，改完两边文案对齐  
+
+### EditMode（工程 manifest）
+
+本地 `file:` 引用时，工程 `Packages/manifest.json` 需：
+
+```json
+"testables": [ "com.kabu.unity-mcp" ]
+```
+
+写的是**包名**。缺则 Editor.Tests 不编译。

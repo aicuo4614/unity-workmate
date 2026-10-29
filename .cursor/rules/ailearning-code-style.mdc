@@ -1,0 +1,37 @@
+---
+description: AILearning 代码习惯：中文注释讲清「为什么」、模块 docstring、关键分叉必须说明；禁止无信息注释。
+alwaysApply: true
+---
+
+# 代码与注释习惯
+
+对齐本仓库已有风格（见 `stream_bridge.py`、`server/tools/`、各 `*_node.py`）。
+
+## 注释写什么
+
+- **关键 / 复杂处必须写清「为什么」**，不要只重复代码在干什么。
+- 适合写注释的地方：
+  - 跨层约定（LangGraph 事件名、HITL 打断、resume 为何传 `None`）
+  - 反直觉行为（执行站为何不用完整 messages 历史；intent 为何屏蔽 stream）
+  - 扮演分界（这段为何不能写死 `scene_perf` / Batches）
+  - 易踩坑（ContextVar 跨 task、ToolMessage content 块形状；resume 勿 `Command(goto, update=…)`）
+- **禁止**：`# 增加 i`、`# 返回结果` 这类废话；大段注释掉的死代码（直接删）。
+
+## 形式
+
+- 模块顶：简短中文 docstring（职责一句话 + 不做什么）。
+- 常量区：用分隔注释说明来源（框架约定 vs 我们定的），参考 `stream_bridge` 的 `LC_*` / `NODE_*`。
+- 函数：对外/非显然的用 docstring；内部小函数可一行说明意图。
+- 语言：**简体中文**（标识符、工具名保持英文）。
+
+## 结构习惯（写新代码时跟）
+
+- 节点：文件顶 `phase_name`；编排薄、业务进 `roles/` / prompts。
+- 工具绑定：分析站 `tools.tools_for_analyze()`。执行站暂不绑工具。节点不堆工具名单。
+- 扮演：`register_role_*` + Protocol（`roles/registry`）；通用模块只调 `build_report` / `summarize_*` 等入口。
+- LLM：填结构用 `ainvoke`；给人看的口播常由代码拼或二次润色，避免把内部 JSON 流到 client。
+- Prompt：软约束优先（`phase_instruction` + md）；无仓库默认任务档案。
+
+## 改完自检
+
+别人第一次读这段，能否在 10 秒内知道「为何不能改成另一种写法」？不能 → 补一句注释。

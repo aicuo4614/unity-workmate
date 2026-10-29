@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "kabu-unity-mcp-assets": {
+      "url": "http://127.0.0.1:3828/mcp"
+    }
+  }
+}

@@ -1,0 +1,80 @@
+---
+description: AILearning 编排骨架：一图多扮演、瘦图+HITL、infra Manager、包地图；禁止场景优化业务渗进通用层。
+alwaysApply: true
+---
+
+# 编排架构（防耦合）
+
+权威长文：`server/docs/unity_assistant_loop.md`。注释习惯：`ailearning-code-style.mdc`。前端：`ailearning-client-web.mdc`。
+
+## 三层
+
+| 层 | 含义 | 落点 |
+|---|---|---|
+| 智能体 | Unity 编辑器助手总编排 | LangGraph + FastAPI + MCP |
+| 扮演 | 本局职责（场景优化 / …） | `prompts/`、`server/roles/` |
+| 本局约束 | 关注主维、平台口吻等 | `session_prefs` / HITL；**无默认 profiles** |
+
+## 服务边界（Manager）
+
+有状态、可换后端、会被多处调用的能力 → 独立 Manager，对外只暴露稳定接口。
+
+| 能力 | Manager | 对外接口 | 禁止 |
+|---|---|---|---|
+| Checkpoint | `server/infra/checkpoint_manager` | `init_checkpoint` / `get_checkpointer` | 在 `graph_manager` 里直接 `InMemorySaver()` |
+| Run / 会话日志 | `server/infra/run_log_manager` | `begin_run` + 时间线（dev→`server/logs`） | 节点里自建跑次目录 / 一工具一 JSON |
+| 图 | `server/graph/graph_manager` | `init_graph` / `get_graph` | 在 listener 里 compile |
+| role 分流 | `server/graph/flow` | `can_act` / `route_from_intent` | 为扮演复制一套图 |
+| MCP 连接 | `server/tools` | `init_tools` / `reconnect_mcp` / `mcp_status` | 一台失败拆掉其他服务器；前端直连 MCP 端口 |
+| Android MCP | `server/mcp/mcp.json` 的 `android-mcp` | 侧栏先扫设备再选机连接；分析站绑定该 MCP 全部工具；侧栏 `android_panel` | 启动时自动连；前端调 adb；在分析站按工具名再滤一层 |
+| Perfetto 真机采样 | `server/tools/perfetto_capture` | `capture_perfetto` / `latest_perfetto`（HTTP：`/mcp/android/perfetto/*`） | 塞进 graph 节点；V1 不进对话 |
+| Unity Profiler .raw | `server/tools/profiler_capture` | `start/stop` 通知 kabu-profiler（HTTP 17890 或 cmd 文件）再 pull `.raw`+截图；`open` / `convert`→`.data`+`.detaildata`（服务端再裁 `.aidata`）（HTTP：`/mcp/android/profiler/*`） | 塞进 graph；对话只喂 `.aidata`；面板不冷启 |
+
+硬性：`graph_manager` 的 checkpointer **必须**来自 `get_checkpointer()`。证据袋是 state 策略（`server/evidence`），不是删整个 checkpoint thread。
+
+## 包地图
+
+```
+server/
+  infra/                 # checkpoint_manager, run_log_manager
+  graph/                 # 瘦：编译图、跑图、流式桥、边路由、nodes
+    flow.py              # intent 后分流（图拓扑策略）
+    nodes/               # greet / hitl / intent / analyze / act
+  roles/                 # 扮演业务 + registry（禁止通用层 from …scene_perf_* 解析字段）
+    registry/            # build_report / summarize_* / act_* 入口
+    defaults.py
+  evidence/              # 本局证据袋（state 策略，非边）
+  tools/                  # connect / bind / android_panel / logcat / perfetto_capture
+  prompts/
+  mcp/mcp.json           # Unity URL 与 android-mcp（uvx）并列
+client-web/              # Vite+React+Ant；见 ailearning-client-web.mdc
+common/stream_events.py / models.py
+```
+
+## 数据流
+
+```
+START → greet → hitl → intent → analyze | act
+                  ↑______________|_________|
+```
+
+- `greet`：开场口播，无工具；新建会话点「开始」即跑。
+- `hitl`：唯一等人闸门（`interrupt_before`）；resume `say`/`ask` + content → `intent`。
+- `intent`：LLM 读扮演 `prompts/{role}_intent.md` 分流，不调 Unity；写出 `route` ∈ {analyze, act}。
+- `analyze`：对应 MCP 的工具整包绑定，模型按对话挑。分析时调用到写入工具也可以。
+- `act`：改场景前再 `interrupt_before`；`approve` 进入执行站。执行站目前不绑工具、不改场景。
+- **无** `report` / `END` / baseline 成功口径；常态停在 `hitl`。
+- `interrupt_before=["hitl","act"]`。
+
+## 硬性
+
+- **一张图、节点名固定**；换扮演不换图骨架。
+- **role**：`ChatRequest.agent_role` → state；缺省 `scene_perf`；resume 从 checkpoint 读。
+- **通用层禁止** `from …roles.scene_perf_* import` 解析业务字段。
+  - ✅ `build_report` / `summarize_*`
+- **场景优化语义**只进 prompts + `roles/scene_perf_*`。
+- analyze 用 `tools.tools_for_analyze()`（该扮演对应 MCP 的全部工具，不按名字裁剪）。执行站暂不登记工具。
+
+## 自检
+
+换一个扮演还成立吗？不成立 → 进 `roles/` 或 prompts，不改图骨架。

@@ -1,0 +1,43 @@
+---
+description: SSE 流式事件与 HITL：hitl 输入闸、act 前批准、resume 契约。
+globs: server/graph/stream_bridge.py,server/graph/runner.py,server/listeners.py,client-web/**,common/stream_events.py
+alwaysApply: false
+---
+
+# 流式事件与 HITL
+
+## 事件
+
+自定义类型在 `common/stream_events.py`（`run_start` / `phase` / `token` / `tool_*` / `observation` / `need_clarify` / `need_approval` / `usage` / `run_end` / `error`）。  
+不要把 LangChain 原始事件名硬编码散落各处；bridge 用常量。
+
+`usage`：每次 `on_chat_model_end` 推 `prompt_tokens` / `completion_tokens`；前端按会话累加，顶栏展示（≥1000 用 `k`）。
+
+## 口播 vs 内部 LLM
+
+- `intent`：结构分流，**屏蔽** stream
+- `analyze` / `greet`：可流式 `token`；伪工具标记出现后 hold，结束再补净文
+- `act`：结束再推口播（`on_chain_end`）
+- 工具箭头仍走 `tool_call` / `tool_result`（前端合并成一条）
+
+## 对话环
+
+- 图：`greet → interrupt_before hitl → intent → analyze|act →（回 hitl）`
+- `analyze`/`act` 回 `hitl`
+- 流结束闸门 → `need_clarify`（`gate=hitl`）或 `need_approval`（`next` 含 `act`）
+- Resume：
+  - hitl：`say`/`ask` + content → `aupdate_state(as_node=hitl)` 再 `Command(goto=intent)`
+  - act 前：`approve` 续跑；`skip` → `Command(goto=hitl)`；`say`/`ask` 改口回 `intent`
+  - **禁止** `Command(goto, update=…)`：update 会记到打断点上
+- 前端：运行中可缓存输入；闸门到且有缓存 → 自动 `say`
+- 非累加字段用 `_last_value` Annotated
+
+## 执行前 HITL
+
+- `interrupt_before` 含 `act`
+- `snap.next` 含 `act` → `need_approval`（`plan_summary` = `act_request`）
+- Resume：`approve` 续跑；`skip` 回 hitl
+
+## 日志
+
+节点跳转日志用模块级上一站记录（勿用跨 task 易丢的 ContextVar）。

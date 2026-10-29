@@ -1,0 +1,28 @@
+# AILearning — Codex 项目配置（仅 trusted 项目会加载）
+# 与 server/mcp/mcp.json 对齐；本文件给 Codex CLI / IDE / ChatGPT Desktop，
+# 不是 FastAPI 运行时（运行时仍读 server/mcp/mcp.json）。
+# Cursor IDE 另见 .cursor/mcp.json。
+
+# 远程 HTTP MCP 需要 rmcp_client（全局若已开可省略；此处显式保证本仓可用）
+[features]
+rmcp_client = true
+
+# Unity 编辑器 MCP（kabu-unity-mcp，client-assets 默认端口 3828）
+[mcp_servers.kabu-unity-mcp]
+enabled = true
+# Unity 未开时不要拖垮整次会话
+required = false
+url = "http://127.0.0.1:3828/mcp"
+startup_timeout_sec = 15
+# renderer_sweep / 重采帧可能很长；与 Hub 600s 同量级
+tool_timeout_sec = 600
+
+# 真机 Android MCP（与 server/mcp/mcp.json 的 android-mcp 一致）
+[mcp_servers.android-mcp]
+enabled = true
+required = false
+command = "uvx"
+args = ["android-mcp"]
+# 首次 uvx 拉包可能较慢
+startup_timeout_sec = 120
+tool_timeout_sec = 120

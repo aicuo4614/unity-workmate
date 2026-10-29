@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "kabu-unity-mcp": {
+      "url": "http://127.0.0.1:3828/mcp"
+    },
+    "android-mcp": {
+      "command": "uvx",
+      "args": ["android-mcp"],
+      "description": "CursorTouch/Android-MCP。真机分析站绑定这台的全部工具。"
+    }
+  }
+}

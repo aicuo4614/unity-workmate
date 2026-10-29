@@ -1,0 +1,36 @@
+---
+description: 新增/扩展扮演（助手）：prompt、report/stream 注册；勿把长业务 hint 焊进通用节点。
+globs: server/roles/**,server/prompts/**,server/graph/flow.py
+alwaysApply: false
+---
+
+# 扮演扩展清单
+
+新扮演（第二套助手）按下列落地，**禁止**复制一套 LangGraph。
+
+## Checklist
+
+1. `server/prompts/<role>.md` + `build_system_for` / `phase_instruction` 增加该 role
+2. `server/prompts/<role>_intent.md` → intent 分流话术（经 `intent_hint`；**禁止**把扮演关键词焊进 `intent_node`）
+3. `roles/<role>_report.py` → `register_role_report`（`build_report`，供 analyze 汇总骨架）
+4. `roles/<role>_stream.py` → `register_role_stream`（观测/工具摘要等）
+5. （可选）`roles/<role>_context.py` → `register_role_context`（本局软事实，如真机前台包；经 `build_session_context`）
+6. `roles/__init__.py` import 以完成 register
+7. 执行站暂不登记 MCP 工具。analyze 不在节点里写工具名；`tools_for_analyze` 给出该扮演对应 MCP 的全部工具。新扮演若不是 Unity，在 `server/tools/bind.py` 登记服务器。
+8. `graph/flow._ROLE_CAPS[role]`：是否启用 `analyze` / `act`
+9. 长 JSON/润色 hint：**优先**放扮演模块或 phase 文案；禁止写死某一扮演且无法换
+
+## 约定
+
+- 分析骨架字典形状由扮演定义；经 `roles/registry` 产出。
+- 无单一 baseline 成功口径；现状与瓶颈说清楚即可。
+- 通用层只调 `build_report` / `summarize_*`，禁止 `from …roles.scene_perf_* import` 解析字段。
+
+## 反例
+
+```python
+# ❌ 通用 analyze_node
+from server.roles.scene_perf_report import _batches_from_capture
+
+# ✅ 调 build_report(role, state)
+```

@@ -1,0 +1,125 @@
+---
+description: AILearning 侧使用/反馈 kabu-unity-mcp（性能采样、Play/Game 视口前置、扩展建议）。改 Agent 采数流程或要给 MCP 提需求时读取。
+alwaysApply: false
+---
+
+# kabu-unity-mcp（AILearning 用法）
+
+本仓库是 **Agent 编排端**（LangGraph / FastAPI），Unity 能力来自 MCP，不在这里重写编辑器逻辑。编排边界见 [`ailearning-orchestration.mdc`](ailearning-orchestration.mdc)。
+
+| 项 | 路径 / 说明 |
+|---|---|
+| MCP 包源码 | `F:/Git/kabu_mobile/kabu-unity-mcp`（UPM `com.kabu.unity-mcp`） |
+| 美术工程（采样场景） | `F:/Git/kabu_mobile/client-assets` |
+| 本仓库 MCP 配置 | `.cursor/mcp.json` → `kabu-unity-mcp-assets` → `http://127.0.0.1:3828/mcp` |
+| 工程 settings / 端口 | `client-assets/Assets/kabu-unity-mcp/settings.json`（3828） |
+| 包内开发长规范 | **本仓** [`.cursor/rules/kabu-unity-mcp-dev.mdc`](kabu-unity-mcp-dev.mdc)（自 client-assets 同步改写）；原稿亦在 `client-assets/.cursor/rules/kabu-unity-mcp-dev.mdc` |
+
+Agent 调用以 **MCP tool schema** 为准，不为每个 tool 写 skill。
+
+目标：`采结构化数据 → 判断瓶颈 → 改完再采对比`。
+
+## 本阶段性能任务约定
+
+- 场景：`Assets/Package_Scene/Low/OnDemand/RoomScene/RoomScene_Op.unity`
+- 主指标：**Batches Count**（电脑端 FPS 常锁 60，不用 FPS 当成功标准）
+- 辅看：`Draw Calls Count`、`SetPass Calls Count`、`Triangles Count`；Frame Debugger `eventCount` 可作交叉验证
+- 当前 baseline（Game 有画面时采到）：Batches **109**，DrawCalls 114，SetPass 60，Tris ~68177
+- 成功：改后 Batches **低于** baseline；每轮只动白名单内 1 个旋钮，改完必须再采
+
+## Agent 编排要点（AILearning 帧诊）
+
+1. **不要**调用 `unity_bring_editor_to_foreground`（不抢焦点；靠 Run In Background + capture 内 `runInBackground`）
+2. **建议勾选** Project Settings → Player → **Run In Background**
+3. 只靠 `unity_perf_capture_frame` 拿 baseline；全 0 时 exit/enter Play 再采一次，勿误判 `recording=false`
+4. `enter_play` 成功只表示 Playing+settle；**有效渲染**以 capture `basics.ok` 为准
+5. 改 MCP 后：
+   - **Server~（`Server~/`、Tools、Hub）**：改完后**主动** `dotnet build`（工作目录 `F:/Git/kabu_mobile/kabu-unity-mcp/Server~`）；若进程已占用旧 DLL，再重启 Server 并让 Unity 重连
+   - **Editor（`Editor/Scripts`）**：靠 Unity 编译 / Domain Reload，不必 dotnet
+6. 帧诊输出须**简体中文**
+
+## 统一采帧（推荐）
+
+优先用 **`unity_perf_capture_frame`**（schema `kabu.perf.frame-capture/v1`）：
+
+- 默认：`basics` + `profile` + `frameDebugger`；`overdraw` 占位 `unavailable`
+- 编排：未 Play 则自动进 Play → 聚焦 Game → 活帧 Counters → profile（清旧帧后采当前 lastFrame Hierarchy，过滤 EditorLoop，优先 PlayerLoop）→ FD（`fdEventLimit` 默认 **0**：不返回 `topEvents`，仅 `eventCount`+`summaryByType`；>0 才按绘制顺序取前 N 条）→ 默认恢复 Play
+- `strictBasics` 默认 true：关键 Render 计数全 0 则 `ok=false` 并重试
+- 细查仍用：`get_counters` / `get_event` / `get_hierarchy_children`
+
+## 采数标准流程（细粒度 / 调试用）
+
+1. `unity_get_active_scene`：确认已是 `RoomScene_Op`；否则 `unity_open_scene`
+2. `unity_enter_play_mode`（已在 Play 则跳过；Domain Reload 后 WS 会断一下再连）
+3. 依赖 **Run In Background**；**不要** `unity_bring_editor_to_foreground` 抢焦点
+4. `unity_profiler_enable`（建议 areas 含 Rendering/CPU；要 Hierarchy 时再考虑 `.raw`）
+5. `unity_profiler_get_counters`，category=`Render`，至少读：
+   - `Batches Count`、`Draw Calls Count`、`SetPass Calls Count`、`Triangles Count`
+6. 若上述全为 **0**：视为 **未采到有效帧**（多半 Game 没在画），不要当成「场景 Batches=0」；重做步骤 3 后再采
+7. 用完：`unity_profiler_disable`；若开过 Frame Debugger → `unity_frame_debugger_disable`
+
+Frame Debugger：`enable` 会暂停 Play；`eventCount` 与 Batches 应同量级。用完必须 disable 恢复播放。
+
+## 已知坑（不是「缺个 Batches 工具」）
+
+| 现象 | 原因 | 怎么处理 |
+|---|---|---|
+| Render 计数全 0，`valid:true` | ①刚进 Play 未出画 / Game 未聚焦；②**场景真的没东西画**（无相机、全关） | `enter_play` 只保证帧在跑；采帧用 `strictBasics` 区分「未出画」vs「真 0」 |
+| Frame Debugger `eventCount=0` | 同上：没有可捕获的 Game 帧 | 先保证 Game 有画面再 enable |
+| `status` 里 `recording=false` 但已 enable | 字段实际表示 **binary log**，不是「有没有帧」 | 看 `firstFrameIndex/lastFrameIndex`；Counters 不依赖 Hierarchy 帧 |
+| `get_hierarchy` 报尚无录制帧 | ProfilerDriver 无帧（仅 `Profiler.enabled` 常不够稳） | 阶段 1 主用 Counters；Hierarchy 作为 MCP 待修项 |
+| Memory 计数正常、Render 为 0 | Recorder 在工作，只是渲染路径没出数 | 仍按「Game 未画」处理 |
+
+**结论**：工具名大体够用；缺的是 **采数稳健性**（前置条件、重试、语义清晰），不是再加一个叫 Batches 的 tool。
+
+## 白名单旋钮（RoomScene_Op，可随任务改）
+
+每轮只改 **1 个根路径**；勿大改 URP Asset。sweep 与 capture 不一致时以 capture 为准。
+
+主攻：`Directional light` 阴影/enabled；`shan_all` MeshBaker；`shu_all`；`ZhuCheng/Box`；`character` 根。
+
+次要：`water`；`zhiwu_01`；`Building` 下单个建筑；`small_grasses` **只关父节点**。
+
+仅测敏感度：`Terrain`；`fx/effect_chuansongmen_kai`。
+
+禁止：单个 `ShortGrassCard` / 批量关草叶、主相机、删资源、改脚本、白名单外乱改。
+
+## 在本仓库改什么 vs 回 MCP 包改什么
+
+| 放 AILearning | 放 kabu-unity-mcp |
+|---|---|
+| system prompt、Plan/Reflect、成功标准 | 新 Editor 能力、采数稳定性 |
+| eval_runner、日志、LangGraph | Server Tool + Handler + Catalog + 测试 |
+| `.cursor/mcp.json` 连接 | `settings.json` 端口/工具开关 |
+
+改包时遵守本仓 **kabu-unity-mcp-dev** 清单（Server + Ops + Handler + Bridge + Catalog + 测试）。
+
+## 建议补强的 MCP 能力（使用中发现，可排期）
+
+已落地：`unity_perf_capture_frame`；`unity_perf_renderer_sweep`；**`unity_perf_get_overdraw`**（整屏粗估 + **TopN play_ab_layers 表**；显示层自建表，回包不带 markdownTable）；**`unity_get_occlusion_info`**（仅烘焙/Area 线索）；**`unity_get_post_process_stack`**；**`unity_get_render_census`**。
+
+**规格长文**：`server/docs/mcp_perf_tool_gaps.md`（遮挡 A/B、Overdraw TopN）。
+
+其余按优先级：
+
+1. **P0 Occlusion A/B**：新 tool 开关剔除 → 双次 capture → 还原，回包 batches delta（回答「有没有起作用」）  
+2. **Overdraw 真像素 per-object**（二期；现 TopN 为 proxy）  
+3. **`get_counters` 稳健模式**（与 capture 内重试类似，可下沉到单 tool）  
+4. **修 Hierarchy 录制**（`hasFrames` 已在 status 中；enable 后仍常无帧）  
+5. **Frame Debugger `failIfEmpty`**  
+6. Description 补前置条件（部分已写在 capture tool）
+
+## 渲染贡献扫描（可选）
+
+**`unity_perf_renderer_sweep`**：有效 baseline 后用一次，缩小嫌疑物体。
+
+- 默认：整场景、`groupBy=sibling`、`batchCount=10`、`target=rendererGo`、`topN=50`、`restore=true`
+- 回包看 `top[].delta.batchesDrop`（越大越值得试关）
+- 耗时长（Hub timeout 600s）；勿与 capture 并行
+- Agent 可按场景自行填 `rootPath` / `groupBy` / `batchCount`，不必每次问人
+## 验证（本仓库联调）
+
+1. Unity：client-assets 开着，Server Window 已连接，端口 3828  
+2. Cursor / 本 Agent：能列出 `unity_profiler_*`  
+3. Play + Game 有画面 → Batches > 0  
+4. 测完 disable Profiler / Frame Debugger，按需退出 Play  
